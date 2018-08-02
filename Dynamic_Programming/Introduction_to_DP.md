@@ -1,4 +1,4 @@
-# Dynamic Programing (DP)
+# Dynamic Programming (DP)
 ## 1. Definition
 Dynamic programming is both a mathematical optimization method and a computer programming method. In both contexts it refers to simplifying a complicated problem by breaking it down into simpler sub-problems in a recursive manner. [(wiki)](https://en.wikipedia.org/wiki/Dynamic_programming)
 ## 2. When are complicated problem and sub-problems?
