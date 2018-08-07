@@ -27,10 +27,10 @@ The problem here is this implementation may calculate the same problems multiple
 the above algorithm works like:
 ```sql
                    fib(4)
-                /          \
+               /            \
              fib(3)      fib(2)
-             /     \     /    \
-        fib(2)  fib(1) fib(1) fib(0)
+           /     \         /    \
+        fib(2)  fib(1)   fib(1) fib(0)
        /     \  
      fib(1) fib(0)
 ```
@@ -38,7 +38,7 @@ You may be noticing here, fib(2) is calculated 2 times for calculating fib(4). A
 
 Each node has a left and right child, we have 4 layers. We need O(2^N) time complexity to calculate fib(N) using the approach.
 
-However we only need O(N) time complexity to get the result using DP approach. Let's think about this problem in the reverse way. We are given fib(0) and fib(1), so we can get fib(3) by adding them up. And we can deduce the rest from this just by adding the preceding numbers.
+However we only need O(N) time complexity to get the result using DP approach. Let's think about this problem in a reverse way. We are given fib(0) and fib(1), so we can get fib(3) by adding them up. And we can deduce the rest from this just by adding the preceding two numbers.
 
 The code is as followings
 
@@ -54,3 +54,7 @@ int fib (int n) {
     return fib_seq[n];
 }
 ```
+## 3. How do we know if a problem is a DP problem?
+
+## 2. How do we tackle DP problems?
+
