@@ -45,3 +45,31 @@ public:
     }
 };
 ```
+[801. Minimum Swaps To Make Sequences Increasing](https://leetcode.com/problems/minimum-swaps-to-make-sequences-increasing/description/)
+```cc
+class Solution {
+public:
+    int minSwap(vector<int>& A, vector<int>& B) {
+        //state: swap[i], not_swap[i]   
+        //recurrence equation: see details below
+        //start state: swap[0] = 1
+        int n = A.size();
+        vector<int> swap(n);
+        vector<int> not_swap(n);
+        swap[0] = 1;
+        for(int i = 1; i < n; ++i){
+            if(A[i] <= A[i - 1] || B[i] <= B[i - 1]){
+                swap[i] = not_swap[i - 1] + 1;
+                not_swap[i] = swap[i - 1];
+            }else if(A[i] <= B[i - 1] || B[i] <= A[i - 1]){
+                not_swap[i] = not_swap[i - 1];
+                swap[i] = swap[i - 1] + 1; 
+            }else{
+                not_swap[i] = min(swap[i - 1], not_swap[i - 1]);
+                swap[i] = not_swap[i] + 1;
+            }
+        }
+        return min(swap[n - 1], not_swap[n - 1]);
+    }
+};
+```
