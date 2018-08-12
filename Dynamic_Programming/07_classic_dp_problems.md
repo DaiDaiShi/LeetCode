@@ -35,3 +35,34 @@ public:
     }
 };
 ```
+[790. Domino and Tromino Tiling](https://leetcode.com/problems/domino-and-tromino-tiling/description/)
+```cc
+class Solution {
+public:
+    int numTilings(int M) {
+        //state: dp[i][N], dp[i][L], dp[i][R]
+        //recurrence equation: 
+        // dp[i][N] = (dp[i - 1][N] + dp[i - 2][N] + dp[i - 1][L] + dp[i - 1][R]) % MOD;
+        // dp[i][L] = (dp[i - 1][R] + dp[i - 2][N]) % MOD;
+        // dp[i][R] = (dp[i - 1][L] + dp[i - 2][N]) % MOD;
+        const int N = 0, L = 1, R = 2;
+        const int MOD = 1000000007;
+        vector<vector<long>> dp(M + 1, vector<long>(3));
+        dp[0][N] = 1;
+        
+        dp[1][N] = 1;
+        
+        dp[2][N] = 2;
+        dp[2][L] = 1;
+        dp[2][R] = 1;
+        
+        for(int i = 3; i <= M; ++i){
+            dp[i][N] = (dp[i - 1][N] + dp[i - 2][N] + dp[i - 1][L] + dp[i - 1][R]) % MOD;
+            dp[i][L] = (dp[i - 1][R] + dp[i - 2][N]) % MOD;
+            dp[i][R] = (dp[i - 1][L] + dp[i - 2][N]) % MOD;
+        }
+        
+        return dp[M][N];
+    }
+};
+```
