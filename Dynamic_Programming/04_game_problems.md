@@ -27,3 +27,28 @@ public:
     }
 };
 ```
+[375. Guess Number Higher or Lower II](https://leetcode.com/problems/guess-number-higher-or-lower-ii/description/)
+```cc
+class Solution {
+public:
+    int getMoneyAmount(int n) {
+        //dp[i][j] represents the least money you need to have to guarantee a win for [i, j].
+        //dp[i][j] = max(k + max(dp[i][k - 1], dp[k + 1][j]), dp[i][j])
+        vector<vector<int>> dp(n + 1, vector<int>(n + 1, 1000000));
+        for(int i = 0; i <= n; ++i) dp[i][i] = 0;
+        for(int l = 0; l <= n; ++l) {
+            for(int i = 1; i + l <= n; i++){
+                int j = i + l;
+                if(l == 1){
+                    dp[i][j] = i;
+                    continue;
+                }
+                for(int k = i + 1; k < j; k++){
+                    dp[i][j] = min(dp[i][j], k + max(dp[i][k - 1], dp[k + 1][j]));
+                }
+            }
+        }
+        return dp[1][n];
+    }
+};
+```
