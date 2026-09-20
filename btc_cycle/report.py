@@ -8,6 +8,7 @@
     python -m btc_cycle.report --position         # exposure + short hurdle
     python -m btc_cycle.report --strategy         # vs buy-and-hold, after costs
     python -m btc_cycle.report --hurdle-only      # short arithmetic, no data needed
+    python -m btc_cycle.report --pattern-noise    # patterns in pure noise, no data needed
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from . import config, datasources, ensemble, features, position
+from . import config, datasources, ensemble, features, patterns, position
 
 
 def _fmt_pct(value: float) -> str:
@@ -244,6 +245,80 @@ def _print_position(frame: pd.DataFrame, verdict) -> None:
             print(f"    - {line}")
 
 
+def _pattern_row(name: str, profile: dict) -> str:
+    pivot = profile.get("from_pivot", {})
+    signal = profile.get("from_signal", {})
+    return (
+        f"  {name:<20} {profile['matches_per_series']:>6.1f} "
+        f"{profile['median_lag_bars']:>6.0f}   "
+        f"{pivot.get('mean', float('nan')):>+7.2%} "
+        f"({pivot.get('standard_errors', float('nan')):>5.1f} se)   "
+        f"{signal.get('mean', float('nan')):>+7.2%} "
+        f"({signal.get('standard_errors', float('nan')):>5.1f} se)"
+    )
+
+
+def _print_pattern_noise(n_series: int = 100) -> None:
+    """What chart patterns do in data known to contain nothing."""
+    rng = np.random.default_rng(0)
+    walk = 100.0 * np.exp(np.cumsum(rng.normal(0.0009, 0.035, 4000)))
+
+    print("=" * 78)
+    print("CHART PATTERNS IN PURE NOISE  (random walk, nothing to predict)")
+    print("=" * 78)
+    print(f"  {'pattern':<20} {'per':>6} {'lag':>6}   {'measured from pivot':>21}"
+          f"   {'measured from signal':>22}")
+    print(f"  {'':<20} {'series':>6} {'bars':>6}")
+
+    baseline = None
+    for name in patterns.DETECTORS:
+        profile = patterns.noise_profile(walk, name, n_series=n_series)
+        baseline = profile["baseline"]
+        print(_pattern_row(name, profile))
+
+    if baseline:
+        print(f"\n  unconditional baseline: {baseline['mean']:+.2%}")
+    print(
+        "\n  Every pattern is hugely 'significant' from its own pivot and "
+        "worth nothing\n  from the bar you could have acted on - in data with "
+        "no signal in it at all.\n  The first column is the pattern's "
+        "definition looking forward, not a forecast."
+    )
+    print("=" * 78)
+
+
+def _print_pattern_audit(prices, n_surrogates: int = 100) -> None:
+    print("\nCHART PATTERN AUDIT (this series)")
+    print(f"  {'pattern':<20} {'found':>6}  {'from pivot':>16}  {'from signal':>16}"
+          f"  {'in noise':>9}")
+    for name in patterns.DETECTORS:
+        try:
+            result = patterns.edge_test(prices, name, n_surrogates=n_surrogates)
+        except Exception as exc:
+            print(f"  {name:<20} failed: {exc}")
+            continue
+        audit = result["lookahead_audit"]
+        if audit.get("n_matches", 0) == 0:
+            print(f"  {name:<20} {'0':>6}  (absent)")
+            continue
+        pivot = audit["from_pivot"]
+        signal = audit["from_signal"]
+        null = result["null_frequency"]
+        print(
+            f"  {name:<20} {audit['n_matches']:>6}  "
+            f"{pivot.get('standard_errors', float('nan')):>13.1f} se  "
+            f"{signal.get('standard_errors', float('nan')):>13.1f} se  "
+            f"{null['series_with_at_least_one']:>8.0%}"
+        )
+        if result["hindsight_only"]:
+            print(f"  {'':<20} -> hindsight only; not tradeable")
+    print(
+        "\n  'in noise' = share of matched random walks containing the pattern. "
+        "Near 100%\n  means its presence alone carries no information. Run "
+        "--pattern-noise for the\n  reference distribution."
+    )
+
+
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(description="Bitcoin four-year cycle phase read")
     parser.add_argument("--csv", help="offline CSV export (date,price[,mvrv,realized_price,...])")
@@ -254,6 +329,8 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--strategy", action="store_true", help="walk-forward strategy vs buy-and-hold")
     parser.add_argument("--allow-short", action="store_true", help="let the backtest take shorts")
     parser.add_argument("--hurdle-only", action="store_true", help="short-hurdle arithmetic, no market data needed")
+    parser.add_argument("--pattern-audit", action="store_true", help="test chart patterns for look-ahead bias")
+    parser.add_argument("--pattern-noise", action="store_true", help="what patterns look like in pure noise; no data needed")
     parser.add_argument("--no-supervised", action="store_true")
     parser.add_argument("--no-macro", action="store_true")
     parser.add_argument("--no-cache", action="store_true")
@@ -265,6 +342,10 @@ def main(argv: list | None = None) -> int:
 
     if args.hurdle_only:
         _print_hurdle()
+        return 0
+
+    if args.pattern_noise:
+        _print_pattern_noise()
         return 0
 
     try:
@@ -297,6 +378,9 @@ def main(argv: list | None = None) -> int:
             )
         except Exception as exc:
             print(f"  backtest unavailable: {exc}")
+
+    if args.pattern_audit:
+        _print_pattern_audit(frame['price'].to_numpy())
 
     if args.position:
         _print_position(frame, verdict)
