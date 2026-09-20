@@ -5,6 +5,9 @@
     python -m btc_cycle.report --json out.json    # machine-readable
     python -m btc_cycle.report --backtest         # forward returns per phase
     python -m btc_cycle.report --self-test        # synthetic sanity check
+    python -m btc_cycle.report --position         # exposure + short hurdle
+    python -m btc_cycle.report --strategy         # vs buy-and-hold, after costs
+    python -m btc_cycle.report --hurdle-only      # short arithmetic, no data needed
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from . import config, datasources, ensemble, features
+from . import config, datasources, ensemble, features, position
 
 
 def _fmt_pct(value: float) -> str:
@@ -163,12 +166,94 @@ def _self_test(fast: bool = True) -> int:
     return 0 if ok else 1
 
 
+def _print_hurdle(drift: float = 0.40, vol: float = 0.50) -> None:
+    """Short-hurdle arithmetic. Needs no market data at all."""
+    summary = position.short_case_summary(drift_annual=drift, vol_annual=vol)
+    hurdle, bears = summary["hurdle"], summary["bear_legs"]
+
+    print("=" * 68)
+    print("SHORT HURDLE  (arithmetic only - no market data used)")
+    print("=" * 68)
+
+    drifts = position.historical_drift_estimates()
+    print("Annualised drift between real cycle anchors:")
+    for row in drifts["spans"]:
+        print(f"  {row['span']:<26} {row['kind']:<24} "
+              f"{row['years']:>5.2f}y  {row['annual_log_drift']:>+8.1%}/yr")
+    print(f"  low-to-low median {drifts['low_to_low_median']:+.1%}/yr "
+          f"(range {drifts['low_to_low_min']:+.1%} to {drifts['low_to_low_max']:+.1%})")
+
+    print(f"\nAssumed: drift {hurdle['assumed_drift']:+.0%}/yr, "
+          f"vol {hurdle['assumed_vol']:.0%}/yr, funding "
+          f"{hurdle['funding_annual']:.0%}/yr, costs {hurdle['annual_cost']:.0%}/yr")
+    print(f"Break-even conditional return for a short: "
+          f"{hurdle['breakeven_conditional_return']:+.0%}/yr")
+    print(f"Shift needed from the unconditional drift: "
+          f"{hurdle['required_shift_to_breakeven']:+.0%} percentage points\n")
+
+    print("  eff_n   std err   required point estimate   (= SE below drift)")
+    for row in hurdle["by_effective_n"]:
+        print(f"  {row['effective_n']:>5}   {row['standard_error']:>6.0%}   "
+              f"{row['required_point_estimate']:>+18.0%}/yr   "
+              f"{row['shift_in_standard_errors']:>15.1f}")
+
+    print("\nWhat the hindsight bear legs actually delivered:")
+    for leg in bears["legs"]:
+        print(f"  {leg['leg']:<26} {leg['years']:>4.2f}y  "
+              f"drawdown {leg['drawdown']:>+7.1%}  "
+              f"annualised {leg['annual_log_return']:>+8.1%}/yr")
+    print(f"  median {bears['median_annual_log_return']:+.1%}/yr")
+
+    print(f"\n  threshold to justify a short (eff_n=8): "
+          f"{summary['threshold_at_effective_n_8']:+.0%}/yr")
+    print(f"  median realised bear leg:               "
+          f"{summary['median_realised_bear_return']:+.0%}/yr")
+    print(f"  headroom:                               {summary['headroom']:+.0%} pp")
+    print(f"\n{summary['conclusion']}")
+    print(f"\nCaveat on those legs: {bears['caveat']}")
+    print("=" * 68)
+
+
+def _print_position(frame: pd.DataFrame, verdict) -> None:
+    print("\nPOSITION")
+    try:
+        advice = position.recommend(frame, verdict)
+    except Exception as exc:
+        print(f"  position read unavailable: {exc}")
+        return
+
+    print(f"  action              {advice.action}")
+    print(f"  target exposure     {advice.target_exposure:+.2f}x "
+          f"(1.00 = fully long spot)")
+    print(f"  expected return     {advice.expected_annual_return:+.1%}/yr "
+          f"(posterior-weighted)")
+    if advice.refused_short:
+        print("  short               REFUSED by the hurdle gate")
+
+    if advice.phase_stats:
+        print("\n  out-of-sample forward returns by phase (annualised):")
+        for phase, stats in advice.phase_stats.items():
+            se = stats.get("bootstrap_se", float("nan"))
+            print(f"    {config.PHASE_ZH.get(phase, phase):<10} "
+                  f"{stats['annualised_mean']:>+7.1%}  +/- {se:>5.1%}  "
+                  f"eff_n {stats['effective_n']:>5}")
+
+    if advice.rationale:
+        print("\n  reasoning:")
+        for line in advice.rationale:
+            print(f"    - {line}")
+
+
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(description="Bitcoin four-year cycle phase read")
     parser.add_argument("--csv", help="offline CSV export (date,price[,mvrv,realized_price,...])")
     parser.add_argument("--json", help="write the full result to this path")
     parser.add_argument("--fast", action="store_true", help="fewer surrogates; quicker, noisier")
     parser.add_argument("--backtest", action="store_true", help="forward returns per phase call")
+    parser.add_argument("--position", action="store_true", help="position sizing and the short hurdle")
+    parser.add_argument("--strategy", action="store_true", help="walk-forward strategy vs buy-and-hold")
+    parser.add_argument("--allow-short", action="store_true", help="let the backtest take shorts")
+    parser.add_argument("--hurdle-only", action="store_true", help="short-hurdle arithmetic, no market data needed")
     parser.add_argument("--no-supervised", action="store_true")
     parser.add_argument("--no-macro", action="store_true")
     parser.add_argument("--no-cache", action="store_true")
@@ -177,6 +262,10 @@ def main(argv: list | None = None) -> int:
 
     if args.self_test:
         return _self_test(fast=args.fast)
+
+    if args.hurdle_only:
+        _print_hurdle()
+        return 0
 
     try:
         loaded = datasources.load(
@@ -208,6 +297,30 @@ def main(argv: list | None = None) -> int:
             )
         except Exception as exc:
             print(f"  backtest unavailable: {exc}")
+
+    if args.position:
+        _print_position(frame, verdict)
+
+    if args.strategy:
+        print("\nWALK-FORWARD STRATEGY vs BUY AND HOLD (after costs and funding)")
+        try:
+            result = position.backtest(frame, allow_short=args.allow_short)
+            for block in (result["strategy"], result["buy_and_hold"]):
+                print(
+                    f"  {block['name']:<16} {block['years']:>5.1f}y  "
+                    f"total {block['total_multiple']:>9.2f}x  "
+                    f"ann {block['annual_log_return']:>+7.1%}  "
+                    f"sharpe {block['sharpe']:>5.2f}  maxDD {block['max_drawdown']:>+7.1%}"
+                )
+            print(f"  average exposure {result['average_exposure']:.2f}")
+            if not result["beats_hold_on_total"]:
+                print(
+                    "  Loses to buy-and-hold on total return. Time out of a "
+                    "compounding asset is expensive; the strategy buys a "
+                    "smaller drawdown with real money."
+                )
+        except Exception as exc:
+            print(f"  strategy backtest unavailable: {exc}")
 
     if args.json:
         with open(args.json, "w") as handle:
